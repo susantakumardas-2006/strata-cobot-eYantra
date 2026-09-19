@@ -120,6 +120,7 @@ def detect_ores(image):
 
             cX = int(M['m10'] / M['m00'])
             cY = int(M['m01'] / M['m00'])
+
             center_ore_list.append((cX, cY))
             ore_type_list.append(ore_type)
 
@@ -314,15 +315,12 @@ class ore_tf(Node):
 
         ############ ADD YOUR CODE HERE ############
         if self.cv_image is None:
-            print("WAITING: cv_image is None")
             return
 
         if self.depth_image is None:
-            print("WAITING: depth_image is None")
             return
 
         if self.cam_info is None:
-            print("WAITING: cam_info is None")
             return
 
         center_ore_list, ore_type_list = detect_ores(self.cv_image)
