@@ -39,7 +39,8 @@ import tf2_ros
 import numpy as np
 from rclpy.node import Node
 from cv_bridge import CvBridge, CvBridgeError
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import TransformStamped, PointStamped
+import tf2_geometry_msgs
 from sensor_msgs.msg import CameraInfo, Image
 
 
@@ -85,7 +86,7 @@ def detect_ores(image):
     color_ranges = {
         'azurite_ore': ((95, 150, 80), (115, 255, 255)),
         'malachite_ore': ((64, 150, 80), (84, 255, 255)),
-        'vanadinite_ore': ((3, 150, 80), (18, 255, 255))
+        'vanadinite_ore': ((8, 175, 130), (11, 255, 255))
     }
 
     for ore_type, (lower, upper) in color_ranges.items():
@@ -95,7 +96,7 @@ def detect_ores(image):
 
         mask = cv2.inRange(hsv, lower, upper)
 
-        kernel = np.ones((5, 5), np.uint8)
+        kernel = np.ones((7,7), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
@@ -198,11 +199,15 @@ class ore_tf(Node):
 
         ############ ADD YOUR CODE HERE ############
 
-        # INSTRUCTIONS & HELP :
-
-        #	->  Add any variable your detection needs to keep between frames.
-        #       ->  HINT: The two ores of a type must keep their ids for the whole run, and
-        #                 'detect_ores' returns them unordered.
+        # Store the previous pixel position of each ore.
+        # This allows the same ore to keep the same ID between frames.
+        self.ore_tracks = {
+            ore_type: {
+                1: None,
+                2: None
+            }
+            for ore_type in ore_types
+        }
 
         ############################################
 
@@ -219,6 +224,17 @@ class ore_tf(Node):
         '''
 
         ############ ADD YOUR CODE HERE ############
+        depth = self.bridge.imgmsg_to_cv2(
+            data,
+            desired_encoding='passthrough'
+        )
+
+        if data.encoding == '16UC1':
+            depth = depth.astype(np.float32) / 1000.0
+        elif data.encoding == '32FC1':
+            depth = depth.astype(np.float32)
+        self.depth_image = depth
+        self.depth_frame_id = data.header.frame_id
 
         # INSTRUCTIONS & HELP :
 
@@ -246,6 +262,10 @@ class ore_tf(Node):
         '''
 
         ############ ADD YOUR CODE HERE ############
+        self.cv_image = self.bridge.imgmsg_to_cv2(
+            data,
+            desired_encoding='bgr8'
+        )
 
         # INSTRUCTIONS & HELP :
 
@@ -267,6 +287,12 @@ class ore_tf(Node):
         '''
 
         ############ ADD YOUR CODE HERE ############
+        self.cam_info = data
+
+        self.fx = float(data.k[0])
+        self.fy = float(data.k[4])
+        self.cx = float(data.k[2])
+        self.cy = float(data.k[5])
 
         # INSTRUCTIONS & HELP :
 
@@ -288,6 +314,135 @@ class ore_tf(Node):
         '''
 
         ############ ADD YOUR CODE HERE ############
+        if self.cv_image is None:
+            return
+
+        if self.depth_image is None:
+            return
+
+        if self.cam_info is None:
+            return
+
+        center_ore_list, ore_type_list = detect_ores(self.cv_image)
+
+        # Group detected ores by type.
+        detections_by_type = {
+            ore_type: []
+            for ore_type in ore_types
+        }
+
+        for center, ore_type in zip(center_ore_list, ore_type_list):
+            detections_by_type[ore_type].append(center)
+
+        # Match each detected ore with a persistent ID.
+        assigned_detections = []
+
+        for ore_type in ore_types:
+
+            detections = detections_by_type[ore_type]
+            previous = self.ore_tracks[ore_type]
+
+            if len(detections) == 0:
+                continue
+
+            # First frame: assign IDs in a fixed order.
+            if previous[1] is None and previous[2] is None:
+
+                detections = sorted(
+                    detections,
+                    key=lambda p: (p[0], p[1])
+                )
+
+                for ore_id, center in enumerate(detections[:2], start=1):
+                    assigned_detections.append(
+                        (center, ore_type, ore_id)
+                    )
+
+                    previous[ore_id] = center
+
+            else:
+                # Match each detection to the nearest previous position.
+                unused_ids = [1, 2]
+
+                for center in detections[:2]:
+
+                    nearest_id = min(
+                        unused_ids,
+                        key=lambda ore_id:
+                            math.hypot(
+                                center[0] - previous[ore_id][0],
+                                center[1] - previous[ore_id][1]
+                            )
+                            if previous[ore_id] is not None
+                            else float('inf')
+                    )
+
+                    assigned_detections.append(
+                        (center, ore_type, nearest_id)
+                    )
+
+                    previous[nearest_id] = center
+                    unused_ids.remove(nearest_id)
+        for (cX, cY), ore_type, ore_id in assigned_detections:
+
+            patch = self.depth_image[cY-4:cY+5, cX-4:cX+5]
+
+            valid_depth = patch[
+                np.isfinite(patch) & (patch > 0.0)
+            ]
+
+            if valid_depth.size == 0:
+                continue
+
+            z = float(np.median(valid_depth))
+            x = (float(cX) - self.cx) * z / self.fx
+            y = (float(cY) - self.cy) * z / self.fy
+
+            point_in_camera = PointStamped()
+            point_in_camera.header.frame_id = self.depth_frame_id
+            point_in_camera.header.stamp = self.get_clock().now().to_msg()
+
+            point_in_camera.point.x = float(x)
+            point_in_camera.point.y = float(y)
+            point_in_camera.point.z = float(z)
+            # Camera measures the top face; required position is the ore centre.
+            ore_half_height = 0.0762 / 2.0
+            point_in_camera.point.z += float(ore_half_height)
+            try:
+                tf = self.tf_buffer.lookup_transform(
+                    base_frame,
+                    self.depth_frame_id,
+                    rclpy.time.Time()
+                )
+
+                point_in_base = tf2_geometry_msgs.do_transform_point(
+                    point_in_camera,
+                    tf
+                )
+
+            except Exception as e:
+                print("TF ERROR:", e)
+                continue
+            # Publish the ore position as a TF frame.
+            t = TransformStamped()
+
+            t.header.stamp = self.get_clock().now().to_msg()
+            t.header.frame_id = base_frame
+            t.child_frame_id = f'{ore_type}_{ore_id}'
+
+            t.transform.translation.x = float(point_in_base.point.x)
+            t.transform.translation.y = float(point_in_base.point.y)
+            t.transform.translation.z = float(point_in_base.point.z)
+
+            # Only translation is required.
+            t.transform.rotation.x = 0.0
+            t.transform.rotation.y = 0.0
+            t.transform.rotation.z = 0.0
+            t.transform.rotation.w = 1.0
+
+            self.br.sendTransform(t)
+        cv2.imshow("Ore Detection", self.cv_image)
+        cv2.waitKey(1)
 
         # INSTRUCTIONS & HELP :
 

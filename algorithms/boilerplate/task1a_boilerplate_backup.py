@@ -80,61 +80,7 @@ def detect_ores(image):
     ore_type_list = []
 
     ############ ADD YOUR CODE HERE ############
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    color_ranges = {
-        'azurite_ore': ((95, 150, 80), (115, 255, 255)),
-        'malachite_ore': ((64, 150, 80), (84, 255, 255)),
-        'vanadinite_ore': ((3, 150, 80), (18, 255, 255))
-    }
-
-    for ore_type, (lower, upper) in color_ranges.items():
-
-        lower = np.array(lower, dtype=np.uint8)
-        upper = np.array(upper, dtype=np.uint8)
-
-        mask = cv2.inRange(hsv, lower, upper)
-
-        kernel = np.ones((5, 5), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-
-        contours, _ = cv2.findContours(
-            mask,
-            cv2.RETR_EXTERNAL,
-            cv2.CHAIN_APPROX_SIMPLE
-        )
-
-        for contour in contours:
-
-            area = cv2.contourArea(contour)
-
-            if area < 100 or area > 1000:
-                continue
-
-            M = cv2.moments(contour)
-
-            if M['m00'] == 0:
-                continue
-
-            cX = int(M['m10'] / M['m00'])
-            cY = int(M['m01'] / M['m00'])
-
-            center_ore_list.append((cX, cY))
-            ore_type_list.append(ore_type)
-
-            cv2.circle(image, (cX, cY), 6, (255, 255, 255), -1)
-
-            cv2.putText(
-                image,
-                ore_type,
-                (cX + 8, cY),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.4,
-                (255, 255, 255),
-                1
-            )
-    return center_ore_list, ore_type_list
     # INSTRUCTIONS & HELP :
 
     #	->  Detect the ores by COLOUR, and return a center pixel and a type for each.
