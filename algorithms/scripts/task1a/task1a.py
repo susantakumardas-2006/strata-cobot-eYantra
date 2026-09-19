@@ -18,8 +18,8 @@
 *****************************************************************************************
 '''
 
-# Team ID:          [ Team-ID ]
-# Author List:		[ Names of team members worked on this file separated by Comma: Name1, Name2, ... ]
+# Team ID:          5722
+# Author List:		Susanta Kumar Das, Shreemanta Mondal, Rishav Sarkar, Rohan Kalamuri
 # Filename:		    task1a_boilerplate.py
 # Functions:
 #			        [ Comma separated list of functions in this file ]
@@ -224,7 +224,7 @@ class ore_tf(Node):
 
         ############ ADD YOUR CODE HERE ############
         depth = self.bridge.imgmsg_to_cv2(
-            data,
+            data,eYRC_26-27_Strata-Cobot
             desired_encoding='passthrough'
         )
 
@@ -444,6 +444,7 @@ class ore_tf(Node):
 
             self.br.sendTransform(t)
         cv2.imshow("Ore Detection", self.cv_image)
+        cv2.imwrite('SC#5722_task1A_detection.png', self.cv_image)
         cv2.waitKey(1)
 
         # INSTRUCTIONS & HELP :
